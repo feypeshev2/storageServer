@@ -6,7 +6,9 @@ const path = require('path');
 const fs = require('fs');
 const { v4: uuidv4 } = require('uuid');
 
-const UPLOADS_ROOT = '/mnt/storage/uploads';
+const { UPLOADS_ROOT } = require('../lib/config');
+const { resolveInside, safeName, escapeXml } = require('../lib/safePath');
+const { can, mayEditEntity, mayEditPath } = require('../lib/auth');
 
 const THUMB_SIZES = {
     user: { width: 160, height: 160 },
@@ -19,15 +21,17 @@ const THUMB_SIZES = {
     zone: { width: 320, height: 200 },
     location: { width: 320, height: 200 },
     service: { width: 320, height: 200 },
+    task: { width: 320, height: 200 },
+    merch_product: { width: 360, height: 360 }, // square: a product photo sits in a card and a table row
 };
 
-const ENTITY_TYPES = ['user', 'band', 'asset', 'equipment', 'stage', 'badge', 'room', 'stay', 'zone', 'location', 'service'];
+const ENTITY_TYPES = ['user', 'band', 'asset', 'equipment', 'stage', 'badge', 'room', 'stay', 'zone', 'location', 'service', 'task', 'merch_product'];
 const ALLOWED_MIMES = ['image/jpeg', 'image/png', 'image/webp'];
 
 // ─── Multer ───────────────────────────────────────────────────────────────────
 const upload = multer({
     storage: multer.memoryStorage(),
-    limits: { fileSize: 10 * 1024 * 1024 },
+    limits: { fileSize: 20 * 1024 * 1024 },
     fileFilter: (req, file, cb) => {
         const allowedMimes = ['image/jpeg', 'image/png', 'image/webp'];
         const allowedExts = ['.jpg', '.jpeg', '.png', '.webp'];
@@ -69,6 +73,9 @@ router.post('/upload', upload.single('image'), async (req, res) => {
         }
         if (!req.file) {
             return res.status(400).json({ message: 'No image file provided' });
+        }
+        if (!mayEditEntity(req.user, entityType)) {
+            return res.status(403).json({ message: 'Forbidden' });
         }
 
         const filename = `${uuidv4()}.jpg`;
@@ -118,13 +125,17 @@ router.delete('/delete', async (req, res) => {
             return res.status(400).json({ message: 'originalPath is required' });
         }
 
-        const originalFull = path.join(UPLOADS_ROOT, originalPath);
-        if (fs.existsSync(originalFull)) fs.unlinkSync(originalFull);
-
-        if (thumbPath) {
-            const thumbFull = path.join(UPLOADS_ROOT, thumbPath);
-            if (fs.existsSync(thumbFull)) fs.unlinkSync(thumbFull);
+        const originalFull = resolveInside(UPLOADS_ROOT, originalPath);
+        const thumbFull = thumbPath ? resolveInside(UPLOADS_ROOT, thumbPath) : null;
+        if (!originalFull || (thumbPath && !thumbFull)) {
+            return res.status(400).json({ message: 'Invalid path' });
         }
+        if (!mayEditPath(req.user, originalPath) || (thumbPath && !mayEditPath(req.user, thumbPath))) {
+            return res.status(403).json({ message: 'Forbidden' });
+        }
+
+        if (fs.existsSync(originalFull)) fs.unlinkSync(originalFull);
+        if (thumbFull && fs.existsSync(thumbFull)) fs.unlinkSync(thumbFull);
 
         res.status(204).send();
     } catch (err) {
@@ -138,16 +149,26 @@ router.delete('/delete', async (req, res) => {
 // Returns: { originalPath, mimeType, size }
 router.post('/generate/badge', async (req, res) => {
     try {
-        const { userId, name, bandRole, phone } = req.body;
+        if (!can(req.user, 'users', 'edit')) return res.status(403).json({ message: 'Forbidden' });
 
-        if (!userId || !name) {
+        const { userId: rawUserId, name: rawName, bandRole: rawRole, phone: rawPhone } = req.body;
+
+        if (!rawUserId || !rawName) {
             return res.status(400).json({ message: 'userId and name are required' });
         }
+
+        // userId ends up in a file name, the rest is pasted into an SVG: neither may carry markup or path parts
+        const userId = safeName(rawUserId);
+        if (!userId) return res.status(400).json({ message: 'Invalid userId' });
+        const clip = (v) => String(v ?? '').slice(0, 120);
+        const name = escapeXml(clip(rawName));
+        const bandRole = escapeXml(clip(rawRole));
+        const phone = escapeXml(clip(rawPhone));
 
         const W = 1240;
         const H = 874;
 
-        const qrText = `${name} | ${bandRole || ''} | ${phone || ''}`;
+        
 
         const dir = path.join(UPLOADS_ROOT, 'generated', 'badges');
         ensureDir(dir);
