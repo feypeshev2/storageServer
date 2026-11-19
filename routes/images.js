@@ -23,9 +23,10 @@ const THUMB_SIZES = {
     service: { width: 320, height: 200 },
     task: { width: 320, height: 200 },
     merch_product: { width: 360, height: 360 }, // square: a product photo sits in a card and a table row
+    lost_found: { width: 320, height: 200 }, // something found on site (the lost and found of the team)
 };
 
-const ENTITY_TYPES = ['user', 'band', 'asset', 'equipment', 'stage', 'badge', 'room', 'stay', 'zone', 'location', 'service', 'task', 'merch_product'];
+const ENTITY_TYPES = ['user', 'band', 'asset', 'equipment', 'stage', 'badge', 'room', 'stay', 'zone', 'location', 'service', 'task', 'merch_product', 'lost_found'];
 const ALLOWED_MIMES = ['image/jpeg', 'image/png', 'image/webp'];
 
 // ─── Multer ───────────────────────────────────────────────────────────────────

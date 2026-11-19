@@ -201,6 +201,43 @@ describe('uploads', () => {
         expect(fs.existsSync(f) || fs.existsSync(t)).toBe(false);
     });
 
+    test('lost and found photos: the people who work with the inventory; not the outside roles or people with no inventory rights', async () => {
+        const inventoryUser = token({ permissions: { assets: ['view'] } });
+        const equipmentUser = token({ permissions: { equipment: ['view'] } });
+        const dj = token({ roleKey: 'dj', permissions: { events: ['view'] } });
+        const send = async (who) =>
+            request(app).post('/images/upload').set('Authorization', who)
+                .field('entityType', 'lost_found').attach('image', await png(), { filename: 'a.png', contentType: 'image/png' });
+        expect((await send(volunteer)).status).toBe(403); // no inventory rights
+        expect((await send(dj)).status).toBe(403);
+        expect(fs.readdirSync(ROOT)).toEqual([]); // nothing written
+        const coordinatorWithRights = token({ roleKey: 'coordinator', permissions: { assets: ['view', 'create', 'edit'] } });
+        for (const who of [inventoryUser, equipmentUser, coordinatorWithRights, admin]) {
+            const res = await send(who);
+            expect(res.status).toBe(201);
+            expect(res.body.originalPath).toMatch(/^\/lost_founds\//);
+            expect(res.body.thumbPath).toMatch(/^\/lost_founds\/thumbs\//);
+        }
+    });
+
+    test('a lost and found photo thumbnail is 320 x 200', async () => {
+        const res = await request(app).post('/images/upload').set('Authorization', admin)
+            .field('entityType', 'lost_found').attach('image', await png(), { filename: 'a.png', contentType: 'image/png' });
+        const meta = await sharp(path.join(ROOT, res.body.thumbPath)).metadata();
+        expect([meta.width, meta.height]).toEqual([320, 200]);
+    });
+
+    test('lost and found photos are deleted by the same people', async () => {
+        const inventoryUser = token({ permissions: { assets: ['view'] } });
+        const f = put('lost_founds/p.jpg');
+        const t = put('lost_founds/thumbs/thumb_p.jpg');
+        const del = (who) => request(app).delete('/images/delete').set('Authorization', who).send({ originalPath: '/lost_founds/p.jpg', thumbPath: '/lost_founds/thumbs/thumb_p.jpg' });
+        expect((await del(volunteer)).status).toBe(403);
+        expect(fs.existsSync(f) && fs.existsSync(t)).toBe(true);
+        expect((await del(inventoryUser)).status).toBe(204);
+        expect(fs.existsSync(f) || fs.existsSync(t)).toBe(false);
+    });
+
     test('PDF upload: user only, and only entityType=user', async () => {
         const send = (entityType) =>
             request(app).post('/files/upload').set('Authorization', volunteer)
